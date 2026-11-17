@@ -9,10 +9,12 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import joblib
 import pandas as pd
-import ollama
+try:
+    import ollama
+except ImportError:
+    ollama = None
 
-from google import genai
-from google.genai import types
+
 
 from dotenv import load_dotenv
 from PIL import Image
@@ -97,7 +99,7 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
 
 # =========================================================
 # UPLOAD FOLDERS CONFIGURATION
@@ -394,11 +396,42 @@ def generate_ai_assessment(
     disease_probability,
     healthy_probability
 ):
+
+    """
+    Generate a structured AI assessment using Ollama.
+
+    ML prediction and AI generation are independent.
+    An Ollama failure will not cancel the ML prediction.
+    """
+
     system_instruction = """
 You are a supportive clinical communication assistant.
-Analyze the supplied heart-health model inputs and screening output.
-"""
 
+Analyze the supplied heart-health model inputs and screening output.
+
+Return ONLY valid JSON using exactly this structure:
+
+{
+    "analysis": "A concise, clear, and encouraging clinical-style summary written in user-friendly language, focusing on wellness insights without repetitive boilerplate disclaimers.",
+    "health_tips": [
+        "🥗 Recommendation 1 with emoji",
+        "🏃 Recommendation 2 with emoji",
+        "🧘 Recommendation 3 with emoji",
+        "💧 Recommendation 4 with emoji"
+    ]
+}
+
+IMPORTANT RULES:
+
+1. Never diagnose or claim the patient definitely has or does not have heart disease.
+2. Do not invent symptoms, medical history, test results, or missing patient information.
+3. Provide 3 to 5 practical, engaging, and varied general wellness suggestions using friendly emojis.
+4. Keep tips distinct and fresh every time (avoid repetitive phrasing or recycling the exact same suggestions).
+5. Do not prescribe medicines, supplements, or specific medical treatments.
+6. Use simple, warm, professional, and encouraging language.
+7. Keep the complete response concise and under 200 words.
+8. Return JSON only. No Markdown fences or additional text.
+"""
     user_prompt = f"""
 PATIENT INPUT PARAMETERS:
 
@@ -416,75 +449,147 @@ HEALTHY MODEL PROBABILITY:
 
 {healthy_probability:.2f}%
 
-Write the assessment and recommendations in the required JSON structure following these rules:
-1. Never diagnose or claim the patient definitely has or does not have heart disease.
-2. Do not invent symptoms, medical history, test results, or missing patient information.
-3. Provide 3 to 5 practical, engaging, and varied general wellness suggestions using friendly emojis.
-4. Keep tips distinct and fresh every time.
-5. Do not prescribe medicines, supplements, or specific medical treatments.
-6. Use simple, warm, professional, and encouraging language.
-7. Keep the complete response concise and under 200 words.
-8. Most importantly, keep the language as simple as possible.
+Write the assessment and recommendations in the required
+JSON structure.
 """
 
+    if ollama is None:
+        app.logger.warning("Ollama Python package is not installed; using fallback AI assessment.")
+        return get_default_ai_assessment()
+
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "analysis": {
-                            "type": "STRING",
-                            "description": "A concise, clear, and encouraging clinical-style summary."
-                        },
-                        "health_tips": {
-                            "type": "ARRAY",
-                            "items": {"type": "STRING"},
-                            "description": "3 to 5 practical recommendations with emojis."
-                        }
-                    },
-                    "required": ["analysis", "health_tips"]
+
+        response = ollama.chat(
+
+            model="gemma4",
+
+            messages=[
+
+                {
+                    "role": "system",
+                    "content": system_instruction
+                },
+
+                {
+                    "role": "user",
+                    "content": user_prompt
                 }
-            )
+
+            ],
+
+            format="json",
+
+            options={
+                "temperature": 0.2
+            }
+
         )
 
-        raw_response = response.text.strip()
-        ai_result = json.loads(raw_response)
+        raw_response = response[
+            "message"
+        ]["content"].strip()
 
+        try:
+
+            ai_result = extract_json_object(
+                raw_response
+            )
+
+        except Exception:
+
+            app.logger.warning(
+                "Ollama returned malformed JSON. Retrying."
+            )
+
+            retry_response = ollama.chat(
+
+                model="gemma4",
+
+                messages=[
+
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return only valid JSON with exactly "
+                            "two keys: analysis and health_tips. "
+                            "Do not invent information."
+                        )
+                    },
+
+                    {
+                        "role": "user",
+                        "content": (
+                            "Convert this response into valid JSON "
+                            "with the required keys:\n\n"
+                            + raw_response
+                        )
+                    }
+
+                ],
+
+                format="json",
+
+                options={
+                    "temperature": 0
+                }
+
+            )
+
+            ai_result = extract_json_object(
+                retry_response["message"]["content"]
+            )
+
+        # Validate analysis.
         analysis = ai_result.get("analysis")
+
         if not isinstance(analysis, str) or not analysis.strip():
+
             analysis = get_default_ai_assessment()["analysis"]
 
+        # Validate tips.
         tips = ai_result.get("health_tips", [])
+
         if isinstance(tips, str):
             tips = [tips]
+
         if not isinstance(tips, list):
             tips = []
 
         tips = [
+
             str(tip).strip()
+
             for tip in tips
-            if isinstance(tip, (str, int, float)) and str(tip).strip()
+
+            if isinstance(tip, (str, int, float))
+            and str(tip).strip()
+
         ]
 
+        # Avoid displaying an empty suggestions section.
         if len(tips) < 3:
+
             tips = get_default_ai_assessment()["health_tips"]
 
         tips = tips[:5]
 
         return {
+
             "analysis": analysis.strip(),
+
             "health_tips": tips,
+
             "ai_status": "success"
+
         }
 
     except Exception as e:
-        app.logger.exception("Gemini AI assessment failed: %s", e)
+
+        app.logger.exception(
+            "Ollama AI assessment failed: %s",
+            e
+        )
+
         return get_default_ai_assessment()
 
 
@@ -1068,4 +1173,6 @@ def file_too_large(error):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+    
