@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+
+{% endblock %}
+
+{% block body %}
+<div class="train-wrapper">
+    <!-- Navigation Bar -->
+    <div class="navigation-bar">
+        <a href="http://127.0.0.1:5000/" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <!-- Header Section -->
+    <div class="train-header">
+        <h3>Train Your Own Model</h3>
+        <p class="text-muted">Upload custom clinical records to benchmark classifiers or switch back to the default system.</p>
+        
+        <div class="train-action-bar" style="margin-top: 1rem;">
+            <form action="/default" method="post" style="display: inline-block;">
+                <button type="submit" class="btn-outline-glass">Use Prebuilt Model</button>
+            </form>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="alert-error-glass" style="margin-bottom: 1.5rem;">
+        <strong>Error:</strong> {{ message }}
+    </div>
+    {% endif %}
+
+    <!-- Upload Controls Grid -->
+    <div class="train-controls-grid">
+        <div class="glass-panel">
+            <div class="panel-title">Upload Custom Dataset</div>
+            <p class="panel-desc">Provide a CSV file containing the required clinical heart-health parameters to train and benchmark multiple machine learning classifiers.</p>
+            <form action="/train" method="post" enctype="multipart/form-data">
+                <div class="file-upload-box" style="margin-bottom: 1rem;">
+                    <input type="file" accept=".csv, text/csv, application/vnd.ms-excel" required id="file" name="train_data" class="form-control">
+                </div>
+                <button type="submit" class="btn-coral">Train Your Model</button>
+            </form>
+        </div>
+    </div>
+
+    {% if report %}
+    {% set class_to_label = {
+        'SVC': 'Support Vector Machine',
+        'RandomForestClassifier': 'Random Forest',
+        'LogisticRegression': 'Logistic Regression',
+        'KNeighborsClassifier': 'K-Nearest Neighbours',
+        'DecisionTreeClassifier': 'Decision Tree'
+    } %}
+    {% set active_algo = class_to_label.get(selected_model, selected_model) %}
+    {% set valid_algos = report.results | map(attribute='algorithm') | list %}
+    {% set checked_algo = active_algo if active_algo in valid_algos else report.selected_model %}
+
+    <div class="report-section" style="margin-top: 2.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0;">Training Results & Performance Report</h3>
+            <div style="display: flex; gap: 10px;">
+                <a href="/download_dataset" class="btn-outline-glass" style="display: inline-block; text-decoration: none; padding: 0.5rem 1rem;">
+                    📥 Download Dataset{% if csv_filename %} ({{ csv_filename }}){% endif %}
+                </a>
+                <form action="/new" method="post" style="margin: 0;">
+                    <button type="submit" class="btn-outline-glass">🔄 Train New Model</button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Dataset Summary Card -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-header">
+                <h5 style="margin: 0;">Dataset Information</h5>
+            </div>
+            <div class="card-body">
+                <div class="dataset-meta-grid">
+                    <div class="meta-stat">
+                        <strong>Total Records</strong>
+                        <span>{{ report.records }}</span>
+                    </div>
+                    <div class="meta-stat">
+                        <strong>Target Column</strong>
+                        <span>{{ report.target }}</span>
+                    </div>
+                    <div class="meta-stat highlight">
+                        <strong>Recommended Model</strong>
+                        <span>{{ report.selected_model }}</span>
+                    </div>
+                    <div class="meta-stat highlight">
+                        <strong>Top Accuracy</strong>
+                        <span>{{ report.selected_model_accuracy }}%</span>
+                    </div>
+                </div>
+                <div class="features-pill-box" style="margin-top: 1rem;">
+                    <strong>Input Features:</strong> {{ report.input_features | join(', ') }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Algorithm Comparison Table Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 style="margin: 0;">Algorithm Performance Comparison</h5>
+            </div>
+            <div class="card-body">
+                <form action="/custom" method="POST">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle text-center">
+                            <thead>
+                                <tr>
+                                    <th>Select</th>
+                                    <th>S.No</th>
+                                    <th>Algorithm</th>
+                                    <th>Accuracy (%)</th>
+                                    <th>Precision (%)</th>
+                                    <th>Recall (%)</th>
+                                    <th>F1 Score (%)</th>
+                                    <th>Training Time (s)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for result in report.results %}
+                                <tr>
+                                    <td>
+                                        <input
+                                            type="radio"
+                                            name="model_name"
+                                            value="{{ result.algorithm }}"
+                                            {% if result.algorithm == checked_algo %}checked{% endif %}
+                                            required
+                                        >
+                                    </td>
+                                    <td>{{ loop.index }}</td>
+                                    <td class="fw-bold text-white">
+                                        {{ result.algorithm }}
+                                        {% if result.algorithm == report.selected_model %}
+                                            <span class="badge bg-success" style="margin-left: 5px;">Best Model</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ result.accuracy }}%</td>
+                                    <td>{{ result.precision }}%</td>
+                                    <td>{{ result.recall }}%</td>
+                                    <td>{{ result.f1 }}%</td>
+                                    <td>{{ result.training_seconds }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div style="margin-top: 1.5rem; max-width: 240px;">
+                        <button type="submit" class="btn-coral">Select This Model</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
