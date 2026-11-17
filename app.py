@@ -936,7 +936,7 @@ def default():
             if request.path == '/new':
                 return redirect('train')
             elif request.path == '/default':
-                return redirect('home')
+                return redirect('/')
 
         except Exception as e:
             return render_template("train.html", error=True, message=str(e))
