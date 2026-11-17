@@ -934,9 +934,9 @@ def default():
             custom_model = {}
             current_csv_path = None
             if request.path == '/new':
-                return render_template(redirect('train'))
+                return redirect('train')
             elif request.path == '/default':
-                return render_template(redirect('home'))
+                return redirect('home')
 
         except Exception as e:
             return render_template("train.html", error=True, message=str(e))
